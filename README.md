@@ -1,1 +1,2 @@
-# chuss
+# Chuss
+Or chess with a twist.
