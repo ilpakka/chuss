@@ -73,18 +73,7 @@ end
 -- Draw the game
 function love.draw()
     local gameState = game.getState()
-    
-    -- Draw background
-    ui.drawBackground()
-    
-    -- Draw the board
-    ui.drawBoard(board, gameState.selectedPiece, gameState.validMoves)
-    
-    -- Draw buttons
-    ui.drawButtons()
-    
-    -- Draw game status
-    ui.drawStatus(gameState.message, gameState.gameOver, gameState.winner)
+    ui.draw(gameState, board)
 end
 
 -- Update game state

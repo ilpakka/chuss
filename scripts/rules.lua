@@ -29,7 +29,11 @@ function rules.isValidMove(board, fromX, fromY, toX, toY, currentTurn, lastPawnM
     elseif piece.type == "queen" then
         valid = rules.isValidQueenMove(board, fromX, fromY, toX, toY)
     elseif piece.type == "king" then
-        valid = rules.isValidKingMove(fromX, fromY, toX, toY)
+        -- For king moves, we need to check if the destination square is under attack
+        -- This is already handled in isValidKingMove, so we don't need to check again
+        valid = rules.isValidKingMove(board, fromX, fromY, toX, toY, currentTurn)
+        -- If the move is valid, return true immediately (no need to check if it puts the king in check)
+        return valid
     end
     
     -- If the move is valid, check if it would put the king in check
@@ -46,11 +50,13 @@ function rules.isValidMove(board, fromX, fromY, toX, toY, currentTurn, lastPawnM
         board[fromY][fromX] = piece
         board[toY][toX] = tempPiece
         
-        -- The move is only valid if it doesn't put the king in check
-        return not inCheck
+        -- If the move would put the king in check, it's not valid
+        if inCheck then
+            return false
+        end
     end
     
-    return false
+    return valid
 end
 
 -- Check if a pawn move is valid
@@ -111,7 +117,13 @@ function rules.isValidRookMove(board, fromX, fromY, toX, toY)
         local startY = math.min(fromY, toY)
         local endY = math.max(fromY, toY)
         for y = startY + 1, endY - 1 do
-            if board[y][fromX] then
+            -- Check if the coordinates are within the board boundaries
+            if y < 1 or y > 8 then
+                return false
+            end
+            
+            -- Check if there's a piece blocking the path
+            if board[y] and board[y][fromX] then
                 return false
             end
         end
@@ -119,7 +131,13 @@ function rules.isValidRookMove(board, fromX, fromY, toX, toY)
         local startX = math.min(fromX, toX)
         local endX = math.max(fromX, toX)
         for x = startX + 1, endX - 1 do
-            if board[fromY][x] then
+            -- Check if the coordinates are within the board boundaries
+            if x < 1 or x > 8 then
+                return false
+            end
+            
+            -- Check if there's a piece blocking the path
+            if board[fromY] and board[fromY][x] then
                 return false
             end
         end
@@ -149,9 +167,16 @@ function rules.isValidBishopMove(board, fromX, fromY, toX, toY)
     local y = fromY + dy
     
     while x ~= toX do
-        if board[y][x] then
+        -- Check if the coordinates are within the board boundaries
+        if x < 1 or x > 8 or y < 1 or y > 8 then
             return false
         end
+        
+        -- Check if there's a piece blocking the path
+        if board[y] and board[y][x] then
+            return false
+        end
+        
         x = x + dx
         y = y + dy
     end
@@ -166,11 +191,111 @@ function rules.isValidQueenMove(board, fromX, fromY, toX, toY)
            rules.isValidBishopMove(board, fromX, fromY, toX, toY)
 end
 
+-- Check if a square is under attack by an opponent's piece
+function rules.isSquareUnderAttack(board, x, y, currentTurn)
+    local opponentColor = currentTurn == "white" and "black" or "white"
+    
+    -- Check if any opponent's piece can attack the square
+    for fromY = 1, 8 do
+        for fromX = 1, 8 do
+            local piece = board[fromY][fromX]
+            if piece and piece.color == opponentColor then
+                -- Check if the move is valid (ignoring the check for putting own king in check)
+                local valid = false
+                if piece.type == "pawn" then
+                    -- For pawns, we need to check if they can capture diagonally
+                    local direction = opponentColor == "white" and -1 or 1
+                    -- Pawns can only attack diagonally forward
+                    if math.abs(x - fromX) == 1 and y - fromY == direction then
+                        valid = true
+                    end
+                elseif piece.type == "rook" then
+                    valid = rules.isValidRookMove(board, fromX, fromY, x, y)
+                elseif piece.type == "knight" then
+                    valid = rules.isValidKnightMove(fromX, fromY, x, y)
+                elseif piece.type == "bishop" then
+                    valid = rules.isValidBishopMove(board, fromX, fromY, x, y)
+                elseif piece.type == "queen" then
+                    valid = rules.isValidQueenMove(board, fromX, fromY, x, y)
+                elseif piece.type == "king" then
+                    -- For king vs king, we need to check if the destination is adjacent to the opponent's king
+                    local kingDx = math.abs(x - fromX)
+                    local kingDy = math.abs(y - fromY)
+                    valid = kingDx <= 1 and kingDy <= 1
+                end
+                
+                if valid then
+                    return true
+                end
+            end
+        end
+    end
+    
+    return false
+end
+
 -- Check if a king move is valid
-function rules.isValidKingMove(fromX, fromY, toX, toY)
+function rules.isValidKingMove(board, fromX, fromY, toX, toY, currentTurn)
     local dx = math.abs(toX - fromX)
     local dy = math.abs(toY - fromY)
-    return dx <= 1 and dy <= 1
+    
+    -- Check if the king is moving one square in any direction
+    if dx > 1 or dy > 1 then
+        return false
+    end
+    
+    -- Check if the destination square is under attack
+    local isUnderAttack = rules.isSquareUnderAttack(board, toX, toY, currentTurn)
+    
+    -- If the destination square is under attack, check if it's occupied by an attacking piece
+    -- that the king can capture
+    if isUnderAttack then
+        local destPiece = board[toY][toX]
+        if destPiece and destPiece.color ~= currentTurn then
+            -- The king can capture the attacking piece
+            return true
+        end
+        
+        -- Debug information
+        print("King move rejected: Square (" .. toX .. "," .. toY .. ") is under attack")
+        
+        -- Find which piece is attacking the square
+        local opponentColor = currentTurn == "white" and "black" or "white"
+        for y = 1, 8 do
+            for x = 1, 8 do
+                local piece = board[y][x]
+                if piece and piece.color == opponentColor then
+                    local valid = false
+                    if piece.type == "pawn" then
+                        local direction = opponentColor == "white" and -1 or 1
+                        if math.abs(toX - x) == 1 and toY - y == direction then
+                            valid = true
+                        end
+                    elseif piece.type == "rook" then
+                        valid = rules.isValidRookMove(board, x, y, toX, toY)
+                    elseif piece.type == "knight" then
+                        valid = rules.isValidKnightMove(x, y, toX, toY)
+                    elseif piece.type == "bishop" then
+                        valid = rules.isValidBishopMove(board, x, y, toX, toY)
+                    elseif piece.type == "queen" then
+                        valid = rules.isValidQueenMove(board, x, y, toX, toY)
+                    elseif piece.type == "king" then
+                        local kingDx = math.abs(toX - x)
+                        local kingDy = math.abs(toY - y)
+                        valid = kingDx <= 1 and kingDy <= 1
+                    end
+                    
+                    if valid then
+                        print("  Attacked by " .. opponentColor .. " " .. piece.type .. " at (" .. x .. "," .. y .. ")")
+                    end
+                end
+            end
+        end
+        
+        return false
+    end
+    
+    return true
 end
 
 -- Find a king's position on the board
@@ -205,7 +330,11 @@ function rules.isKingInCheck(board, color)
                 -- Check if the move is valid (ignoring the check for putting own king in check)
                 local valid = false
                 if piece.type == "pawn" then
-                    valid = rules.isValidPawnMove(board, x, y, kingX, kingY, opponentColor)
+                    -- For pawns, we need to check if they can capture diagonally
+                    local direction = opponentColor == "white" and -1 or 1
+                    if math.abs(kingX - x) == 1 and kingY - y == direction then
+                        valid = true
+                    end
                 elseif piece.type == "rook" then
                     valid = rules.isValidRookMove(board, x, y, kingX, kingY)
                 elseif piece.type == "knight" then
@@ -215,7 +344,10 @@ function rules.isKingInCheck(board, color)
                 elseif piece.type == "queen" then
                     valid = rules.isValidQueenMove(board, x, y, kingX, kingY)
                 elseif piece.type == "king" then
-                    valid = rules.isValidKingMove(x, y, kingX, kingY)
+                    -- For king vs king, we need to check if the destination is adjacent to the opponent's king
+                    local kingDx = math.abs(kingX - x)
+                    local kingDy = math.abs(kingY - y)
+                    valid = kingDx <= 1 and kingDy <= 1
                 end
                 
                 -- Restore the king
@@ -256,6 +388,11 @@ function rules.isKingInCheckForCastling(board, color, side)
             local piece = board[y][x]
             if piece and piece.color == opponentColor then
                 for _, square in ipairs(squaresToCheck) do
+                    -- Check if the square is within the board boundaries
+                    if square.x < 1 or square.x > 8 or square.y < 1 or square.y > 8 then
+                        return true
+                    end
+                    
                     -- Make a temporary move to check if it would capture the square
                     local tempPiece = board[square.y][square.x]
                     board[square.y][square.x] = nil
@@ -263,7 +400,11 @@ function rules.isKingInCheckForCastling(board, color, side)
                     -- Check if the move is valid (ignoring the check for putting own king in check)
                     local valid = false
                     if piece.type == "pawn" then
-                        valid = rules.isValidPawnMove(board, x, y, square.x, square.y, opponentColor)
+                        -- For pawns, we need to check if they can capture diagonally
+                        local direction = opponentColor == "white" and -1 or 1
+                        if math.abs(square.x - x) == 1 and square.y - y == direction then
+                            valid = true
+                        end
                     elseif piece.type == "rook" then
                         valid = rules.isValidRookMove(board, x, y, square.x, square.y)
                     elseif piece.type == "knight" then
@@ -273,7 +414,10 @@ function rules.isKingInCheckForCastling(board, color, side)
                     elseif piece.type == "queen" then
                         valid = rules.isValidQueenMove(board, x, y, square.x, square.y)
                     elseif piece.type == "king" then
-                        valid = rules.isValidKingMove(x, y, square.x, square.y)
+                        -- For king vs king, we need to check if the destination is adjacent to the opponent's king
+                        local kingDx = math.abs(square.x - x)
+                        local kingDy = math.abs(square.y - y)
+                        valid = kingDx <= 1 and kingDy <= 1
                     end
                     
                     -- Restore the square

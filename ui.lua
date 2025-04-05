@@ -12,6 +12,15 @@ local buttonFont = nil
 local statusFont = nil
 local effectImages = nil
 local selectedEffect = nil
+local promotionDialog = {
+    width = 400,
+    height = 120,
+    pieceSize = 80,
+    pieces = {"queen", "rook", "bishop", "knight"}
+}
+
+-- Add to the top with other local variables
+local promotionPieces = {"queen", "rook", "bishop", "knight"}
 
 -- Initialize UI
 function ui.init(config, boardModule, pieceImages, effectsModule)
@@ -93,6 +102,7 @@ end
 -- Draw the background
 function ui.drawBackground()
     if background then
+        love.graphics.setColor(1, 1, 1, 1)
         love.graphics.draw(background, 0, 0, 0, 
             love.graphics.getWidth() / background:getWidth(), 
             love.graphics.getHeight() / background:getHeight())
@@ -285,6 +295,99 @@ end
 -- Get board flip state
 function ui.isBoardFlipped()
     return boardFlipped
+end
+
+-- Draw promotion dialog
+function ui.drawPromotionDialog(color, pieceImages)
+    -- Calculate center position
+    local screenWidth = love.graphics.getWidth()
+    local screenHeight = love.graphics.getHeight()
+    local dialogX = (screenWidth - promotionDialog.width) / 2
+    local dialogY = (screenHeight - promotionDialog.height) / 2
+    
+    -- Draw semi-transparent dark background
+    love.graphics.setColor(0, 0, 0, 0.9)
+    love.graphics.rectangle("fill", dialogX, dialogY, promotionDialog.width, promotionDialog.height)
+    
+    -- Draw white border
+    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.rectangle("line", dialogX, dialogY, promotionDialog.width, promotionDialog.height)
+    
+    -- Draw title
+    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.setFont(statusFont)
+    local title = "Choose a piece for promotion"
+    local titleWidth = statusFont:getWidth(title)
+    love.graphics.print(title, dialogX + (promotionDialog.width - titleWidth) / 2, dialogY + 10)
+    
+    -- Draw piece options
+    local pieceStartX = dialogX + (promotionDialog.width - (#promotionDialog.pieces * promotionDialog.pieceSize)) / 2
+    local pieceY = dialogY + 40
+    
+    for i, pieceType in ipairs(promotionDialog.pieces) do
+        local pieceX = pieceStartX + (i-1) * promotionDialog.pieceSize
+        
+        -- Draw piece background
+        love.graphics.setColor(0.3, 0.3, 0.3, 1)
+        love.graphics.rectangle("fill", pieceX, pieceY, promotionDialog.pieceSize, promotionDialog.pieceSize)
+        love.graphics.setColor(1, 1, 1, 1)
+        love.graphics.rectangle("line", pieceX, pieceY, promotionDialog.pieceSize, promotionDialog.pieceSize)
+        
+        -- Draw the piece
+        local pieceImg = pieceImages[color][pieceType]
+        if pieceImg then
+            love.graphics.setColor(1, 1, 1, 1)
+            local scale = (promotionDialog.pieceSize * 0.8) / pieceImg:getWidth()
+            love.graphics.draw(pieceImg, 
+                pieceX + (promotionDialog.pieceSize - pieceImg:getWidth() * scale) / 2,
+                pieceY + (promotionDialog.pieceSize - pieceImg:getHeight() * scale) / 2,
+                0, scale, scale)
+        end
+    end
+    
+    -- Reset color
+    love.graphics.setColor(1, 1, 1, 1)
+end
+
+-- Add this helper function to check if a click is within the promotion dialog
+function ui.getPromotionPieceAtPosition(x, y)
+    local screenWidth = love.graphics.getWidth()
+    local screenHeight = love.graphics.getHeight()
+    local dialogX = (screenWidth - promotionDialog.width) / 2
+    local dialogY = (screenHeight - promotionDialog.height) / 2
+    local pieceStartX = dialogX + (promotionDialog.width - (#promotionDialog.pieces * promotionDialog.pieceSize)) / 2
+    local pieceY = dialogY + 40
+    
+    -- Check if click is in the piece selection area
+    if y >= pieceY and y < pieceY + promotionDialog.pieceSize then
+        local relativeX = x - pieceStartX
+        local pieceIndex = math.floor(relativeX / promotionDialog.pieceSize) + 1
+        
+        if pieceIndex >= 1 and pieceIndex <= #promotionDialog.pieces then
+            return promotionDialog.pieces[pieceIndex]
+        end
+    end
+    
+    return nil
+end
+
+function ui.draw(gameState, board)
+    -- Draw background
+    ui.drawBackground()
+    
+    -- Draw the board and pieces
+    ui.drawBoard(board, gameState.selectedPiece, gameState.validMoves)
+    
+    -- Draw buttons
+    ui.drawButtons()
+    
+    -- Draw game status
+    ui.drawStatus(gameState.message, gameState.gameOver, gameState.winner)
+    
+    -- Draw promotion dialog if needed (on top of everything else)
+    if gameState.promotionPending then
+        ui.drawPromotionDialog(gameState.promotionPending.color, ui.pieceImages)
+    end
 end
 
 return ui 

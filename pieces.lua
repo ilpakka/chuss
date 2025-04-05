@@ -141,7 +141,7 @@ function pieces.isKingInCheckForCastling(board, color, side)
                     elseif piece.type == "queen" then
                         valid = rules.isValidQueenMove(board, x, y, square.x, square.y)
                     elseif piece.type == "king" then
-                        valid = rules.isValidKingMove(x, y, square.x, square.y)
+                        valid = rules.isValidKingMove(board, x, y, square.x, square.y, opponentColor)
                     end
                     
                     -- Restore the square

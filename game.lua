@@ -25,12 +25,36 @@ local gameState = {
     },
     selectedEffect = nil,
     removeEffectSelected = false,
-    lastPawnMove = nil  -- Track the last pawn that moved two squares for en passant
+    lastPawnMove = nil,  -- Track the last pawn that moved two squares for en passant
+    promotionPending = nil,  -- Will store {x=x, y=y, color=color} when promotion is pending
 }
 
 -- Sound effects
 local moveSound = nil
 local audioEnabled = false
+
+-- Add this function at the top of the file, after the gameState declaration but before handleMouseClick
+local function handleTurnEnd(boardModule, piecesModule)
+    -- Check for checkmate or stalemate
+    local opponentColor = gameState.currentTurn == "white" and "black" or "white"
+    if piecesModule.isCheckmate(boardModule.getBoard(), opponentColor) then
+        gameState.gameOver = true
+        gameState.winner = gameState.currentTurn
+        gameState.message = "Checkmate! " .. gameState.currentTurn .. " wins!"
+    elseif piecesModule.isStalemate(boardModule.getBoard(), opponentColor) then
+        gameState.gameOver = true
+        gameState.winner = "draw"
+        gameState.message = "Stalemate! The game is a draw."
+    else
+        -- Switch turns
+        gameState.currentTurn = opponentColor
+        gameState.message = gameState.currentTurn .. "'s turn"
+    end
+    
+    -- Clear selection
+    gameState.selectedPiece = nil
+    gameState.validMoves = {}
+end
 
 -- Initialize the game
 function game.init(config, boardModule, piecesModule)
@@ -122,9 +146,99 @@ function playSound()
     end
 end
 
+-- Modify the checkPawnPromotion function to use boardModule
+local function checkPawnPromotion(boardModule, x, y)
+    local piece = boardModule.getPiece(x, y)
+    if piece and piece.type == "pawn" then
+        local promotionRank = piece.color == "white" and 1 or 8
+        if y == promotionRank then
+            return true
+        end
+    end
+    return false
+end
+
+-- Modify the promotePawn function to use boardModule
+local function promotePawn(boardModule, x, y, newType)
+    local piece = boardModule.getPiece(x, y)
+    if piece and piece.type == "pawn" then
+        piece.type = newType
+        return true
+    end
+    return false
+end
+
+-- Modify the helper function to accept piecesModule as a parameter
+local function isKingInCheckmate(boardModule, piecesModule, color)
+    -- First check if king is in check
+    if not piecesModule.isKingInCheck(boardModule.getBoard(), color) then
+        return false
+    end
+    
+    -- Try all possible moves for all pieces
+    for fromY = 1, 8 do
+        for fromX = 1, 8 do
+            local piece = boardModule.getPiece(fromX, fromY)
+            if piece and piece.color == color then
+                -- Get valid moves for this piece
+                local validMoves = piecesModule.getValidMoves(boardModule.getBoard(), fromX, fromY, color, gameState.lastPawnMove)
+                
+                -- Try each move
+                for _, move in ipairs(validMoves) do
+                    -- Make temporary move
+                    local capturedPiece = boardModule.getPiece(move.x, move.y)
+                    boardModule.setPiece(move.x, move.y, piece)
+                    boardModule.setPiece(fromX, fromY, nil)
+                    
+                    -- Check if king is still in check
+                    local stillInCheck = piecesModule.isKingInCheck(boardModule.getBoard(), color)
+                    
+                    -- Undo move
+                    boardModule.setPiece(fromX, fromY, piece)
+                    boardModule.setPiece(move.x, move.y, capturedPiece)
+                    
+                    -- If we found a move that gets out of check, not checkmate
+                    if not stillInCheck then
+                        return false
+                    end
+                end
+            end
+        end
+    end
+    
+    -- If we get here, no move gets out of check
+    return true
+end
+
 -- Handle mouse clicks
 function game.handleMouseClick(x, y, button, boardModule, piecesModule, effectsModule, uiModule)
     if gameState.gameOver then return end
+    
+    -- Handle promotion selection if pending
+    if gameState.promotionPending then
+        -- Check if a promotion piece was clicked
+        local selectedType = uiModule.getPromotionPieceAtPosition(x, y)
+        
+        if selectedType then
+            -- Get the pawn
+            local piece = boardModule.getPiece(gameState.promotionPending.x, gameState.promotionPending.y)
+            if piece then
+                -- Promote the pawn
+                piece.type = selectedType
+                
+                -- Play sound effect if you have one
+                playSound()
+                
+                -- Clear promotion state
+                gameState.promotionPending = nil
+                
+                -- Handle turn switching and end-of-turn logic
+                handleTurnEnd(boardModule, piecesModule)
+            end
+        end
+        -- Always return if promotion is pending (block other moves)
+        return gameState
+    end
     
     if button == 1 then  -- Left click
         local boardX, boardY = boardModule.screenToBoard(x, y)
@@ -204,7 +318,7 @@ function game.handleMouseClick(x, y, button, boardModule, piecesModule, effectsM
                                 )
                                 
                                 if captureOccurred then
-                                    -- Remove the captured piece
+                                    -- Remove the captured piece and move the capturing piece
                                     boardModule.setPiece(boardX, boardY, gameState.selectedPiece.piece)
                                     boardModule.setPiece(gameState.selectedPiece.x, gameState.selectedPiece.y, nil)
                                     
@@ -213,6 +327,28 @@ function game.handleMouseClick(x, y, button, boardModule, piecesModule, effectsM
                                     
                                     -- Play move sound
                                     playSound()
+                                    
+                                    -- Check for pawn promotion after capture
+                                    local movedPiece = boardModule.getPiece(boardX, boardY)
+                                    if movedPiece and movedPiece.type == "pawn" then
+                                        local promotionRank = movedPiece.color == "white" and 1 or 8
+                                        if boardY == promotionRank then
+                                            gameState.promotionPending = {
+                                                x = boardX,
+                                                y = boardY,
+                                                color = movedPiece.color
+                                            }
+                                            gameState.message = "Choose promotion piece"
+                                            -- Clear selection but don't switch turns yet
+                                            gameState.selectedPiece = nil
+                                            gameState.validMoves = {}
+                                            return gameState
+                                        end
+                                    end
+                                    
+                                    -- If no promotion is pending, handle turn switching
+                                    handleTurnEnd(boardModule, piecesModule)
+                                    return gameState
                                 elseif shouldMove then
                                     -- Normal move without capture
                                     boardModule.setPiece(boardX, boardY, gameState.selectedPiece.piece)
@@ -223,28 +359,9 @@ function game.handleMouseClick(x, y, button, boardModule, piecesModule, effectsM
                                     
                                     -- Play move sound
                                     playSound()
-                                else
-                                    -- Effect prevented the move
-                                    gameState.message = gameState.currentTurn .. " broke the shield!"
-                                    gameState.selectedPiece = nil
-                                    gameState.validMoves = {}
                                     
-                                    -- Check if the opponent is in check after the shield is broken
-                                    local opponentColor = gameState.currentTurn == "white" and "black" or "white"
-                                    if piecesModule.isKingInCheck(gameState.board, opponentColor) then
-                                        -- Check if the opponent is in checkmate
-                                        if piecesModule.isCheckmate(gameState.board, opponentColor) then
-                                            gameState.gameOver = true
-                                            gameState.winner = gameState.currentTurn
-                                            gameState.message = "Checkmate! " .. gameState.currentTurn .. " wins!"
-                                        else
-                                            gameState.message = opponentColor .. " is in check!"
-                                        end
-                                    end
-                                    
-                                    -- Switch turns since the attacking piece loses its turn
-                                    gameState.currentTurn = opponentColor
-                                    gameState.message = gameState.currentTurn .. "'s turn"
+                                    -- Handle turn switching
+                                    handleTurnEnd(boardModule, piecesModule)
                                     return gameState
                                 end
                             else
@@ -303,11 +420,11 @@ function game.handleMouseClick(x, y, button, boardModule, piecesModule, effectsM
                             
                             -- Check for checkmate or stalemate
                             local opponentColor = gameState.currentTurn == "white" and "black" or "white"
-                            if piecesModule.isCheckmate(gameState.board, opponentColor) then
+                            if piecesModule.isCheckmate(boardModule.getBoard(), opponentColor) then
                                 gameState.gameOver = true
                                 gameState.winner = gameState.currentTurn
                                 gameState.message = "Checkmate! " .. gameState.currentTurn .. " wins!"
-                            elseif piecesModule.isStalemate(gameState.board, opponentColor) then
+                            elseif piecesModule.isStalemate(boardModule.getBoard(), opponentColor) then
                                 gameState.gameOver = true
                                 gameState.winner = "draw"
                                 gameState.message = "Stalemate! The game is a draw."
@@ -327,7 +444,7 @@ function game.handleMouseClick(x, y, button, boardModule, piecesModule, effectsM
                 -- Select a piece
                 if piece and piece.color == gameState.currentTurn then
                     gameState.selectedPiece = {x = boardX, y = boardY, piece = piece}
-                    gameState.validMoves = piecesModule.getValidMoves(gameState.board, boardX, boardY, gameState.currentTurn, gameState.lastPawnMove)
+                    gameState.validMoves = piecesModule.getValidMoves(boardModule.getBoard(), boardX, boardY, gameState.currentTurn, gameState.lastPawnMove)
                 end
             end
         else
@@ -377,12 +494,12 @@ function game.makeMove(toX, toY, boardModule, piecesModule)
     
     -- Check for checkmate
     local opponentColor = gameState.currentTurn == "white" and "black" or "white"
-    if piecesModule.isCheckmate(boardModule, opponentColor) then
+    if piecesModule.isCheckmate(boardModule.getBoard(), opponentColor) then
         gameState.gameOver = true
         gameState.winner = gameState.currentTurn
         gameState.message = gameState.currentTurn .. " wins by checkmate!"
     -- Check for check
-    elseif piecesModule.isKingInCheck(boardModule, opponentColor) then
+    elseif piecesModule.isKingInCheck(boardModule.getBoard(), opponentColor) then
         gameState.message = opponentColor .. " is in check!"
     else
         gameState.message = opponentColor .. "'s turn"
