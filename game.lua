@@ -24,7 +24,8 @@ local gameState = {
         }
     },
     selectedEffect = nil,
-    removeEffectSelected = false
+    removeEffectSelected = false,
+    lastPawnMove = nil  -- Track the last pawn that moved two squares for en passant
 }
 
 -- Sound effects
@@ -54,6 +55,8 @@ function game.init(config, boardModule, piecesModule)
         }
     }
     gameState.selectedEffect = nil
+    gameState.removeEffectSelected = false
+    gameState.lastPawnMove = nil  -- Reset last pawn move
     
     -- Initialize the board
     boardModule.setupInitialPosition()
@@ -226,60 +229,105 @@ function game.handleMouseClick(x, y, button, boardModule, piecesModule, effectsM
                                     gameState.selectedPiece = nil
                                     gameState.validMoves = {}
                                     
+                                    -- Check if the opponent is in check after the shield is broken
+                                    local opponentColor = gameState.currentTurn == "white" and "black" or "white"
+                                    if piecesModule.isKingInCheck(gameState.board, opponentColor) then
+                                        -- Check if the opponent is in checkmate
+                                        if piecesModule.isCheckmate(gameState.board, opponentColor) then
+                                            gameState.gameOver = true
+                                            gameState.winner = gameState.currentTurn
+                                            gameState.message = "Checkmate! " .. gameState.currentTurn .. " wins!"
+                                        else
+                                            gameState.message = opponentColor .. " is in check!"
+                                        end
+                                    end
+                                    
                                     -- Switch turns since the attacking piece loses its turn
-                                    gameState.currentTurn = gameState.currentTurn == "white" and "black" or "white"
+                                    gameState.currentTurn = opponentColor
                                     gameState.message = gameState.currentTurn .. "'s turn"
                                     return gameState
                                 end
                             else
-                                -- Normal move without capture
-                                boardModule.setPiece(boardX, boardY, gameState.selectedPiece.piece)
-                                boardModule.setPiece(gameState.selectedPiece.x, gameState.selectedPiece.y, nil)
+                                -- Check for en passant capture
+                                local isEnPassant = false
+                                local capturedPawnX = nil
+                                local capturedPawnY = nil
                                 
-                                -- Mark the piece as moved for castling
-                                piecesModule.markPieceMoved(gameState.board, boardX, boardY)
+                                if gameState.selectedPiece.piece.type == "pawn" and 
+                                   math.abs(boardX - gameState.selectedPiece.x) == 1 and 
+                                   gameState.lastPawnMove and 
+                                   gameState.lastPawnMove.x == boardX and 
+                                   ((gameState.currentTurn == "white" and gameState.lastPawnMove.y == gameState.selectedPiece.y) or
+                                    (gameState.currentTurn == "black" and gameState.lastPawnMove.y == gameState.selectedPiece.y)) then
+                                    -- This is an en passant capture
+                                    isEnPassant = true
+                                    capturedPawnX = boardX
+                                    capturedPawnY = gameState.selectedPiece.y
+                                end
                                 
-                                -- Play move sound
-                                playSound()
+                                if isEnPassant then
+                                    -- Remove the captured pawn
+                                    boardModule.setPiece(capturedPawnX, capturedPawnY, nil)
+                                    -- Move the capturing pawn
+                                    boardModule.setPiece(boardX, boardY, gameState.selectedPiece.piece)
+                                    boardModule.setPiece(gameState.selectedPiece.x, gameState.selectedPiece.y, nil)
+                                    
+                                    -- Mark the piece as moved for castling
+                                    piecesModule.markPieceMoved(gameState.board, boardX, boardY)
+                                    
+                                    -- Play move sound
+                                    playSound()
+                                    
+                                    -- Display en passant message
+                                    gameState.message = "En passant capture!"
+                                else
+                                    -- Normal move without capture
+                                    boardModule.setPiece(boardX, boardY, gameState.selectedPiece.piece)
+                                    boardModule.setPiece(gameState.selectedPiece.x, gameState.selectedPiece.y, nil)
+                                    
+                                    -- Mark the piece as moved for castling
+                                    piecesModule.markPieceMoved(gameState.board, boardX, boardY)
+                                    
+                                    -- Play move sound
+                                    playSound()
+                                end
+                                
+                                -- Track the last pawn move for en passant
+                                if gameState.selectedPiece.piece.type == "pawn" and 
+                                   math.abs(boardY - gameState.selectedPiece.y) == 2 then
+                                    gameState.lastPawnMove = {x = boardX, y = boardY}
+                                else
+                                    gameState.lastPawnMove = nil
+                                end
                             end
-                        end
-                        
-                        -- Check for checkmate
-                        local opponentColor = gameState.currentTurn == "white" and "black" or "white"
-                        if piecesModule.isCheckmate(gameState.board, opponentColor) then
-                            gameState.gameOver = true
-                            gameState.winner = gameState.currentTurn
-                            gameState.message = gameState.currentTurn .. " wins by checkmate!"
-                        -- Check for check
-                        elseif piecesModule.isKingInCheck(gameState.board, opponentColor) then
-                            gameState.message = opponentColor .. " is in check!"
-                        else
-                            gameState.message = opponentColor .. "'s turn"
-                        end
-                        
-                        -- Switch turns
-                        gameState.currentTurn = opponentColor
-                        
-                        -- Clear selection
-                        gameState.selectedPiece = nil
-                        gameState.validMoves = {}
-                    else
-                        -- If clicking on a different piece of the same color, select it
-                        if piece and piece.color == gameState.currentTurn then
-                            gameState.selectedPiece = {x = boardX, y = boardY, piece = piece}
-                            gameState.validMoves = piecesModule.getValidMoves(gameState.board, boardX, boardY, gameState.currentTurn)
-                        else
-                            -- Otherwise, deselect the current piece
+                            
+                            -- Check for checkmate or stalemate
+                            local opponentColor = gameState.currentTurn == "white" and "black" or "white"
+                            if piecesModule.isCheckmate(gameState.board, opponentColor) then
+                                gameState.gameOver = true
+                                gameState.winner = gameState.currentTurn
+                                gameState.message = "Checkmate! " .. gameState.currentTurn .. " wins!"
+                            elseif piecesModule.isStalemate(gameState.board, opponentColor) then
+                                gameState.gameOver = true
+                                gameState.winner = "draw"
+                                gameState.message = "Stalemate! The game is a draw."
+                            else
+                                -- Switch turns
+                                gameState.currentTurn = opponentColor
+                                gameState.message = gameState.currentTurn .. "'s turn"
+                            end
+                            
+                            -- Clear selection
                             gameState.selectedPiece = nil
                             gameState.validMoves = {}
                         end
                     end
                 end
-            -- If no piece is selected, select the clicked piece if it belongs to the current player
             else
+                -- Select a piece
                 if piece and piece.color == gameState.currentTurn then
                     gameState.selectedPiece = {x = boardX, y = boardY, piece = piece}
-                    gameState.validMoves = piecesModule.getValidMoves(gameState.board, boardX, boardY, gameState.currentTurn)
+                    gameState.validMoves = piecesModule.getValidMoves(gameState.board, boardX, boardY, gameState.currentTurn, gameState.lastPawnMove)
                 end
             end
         else
