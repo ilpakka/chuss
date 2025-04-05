@@ -36,8 +36,8 @@ function pieces.loadImages()
 end
 
 -- Get all valid moves for a piece
-function pieces.getValidMoves(board, x, y, currentTurn)
-    local moves = rules.getValidMoves(board, x, y, currentTurn)
+function pieces.getValidMoves(board, x, y, currentTurn, lastPawnMove)
+    local moves = rules.getValidMoves(board, x, y, currentTurn, lastPawnMove)
     
     -- Add castling moves if applicable
     local piece = board[y][x]
@@ -105,48 +105,52 @@ function pieces.isKingInCheckForCastling(board, color, side)
     local kingX = 5
     local kingY = rank
     
-    -- Check if the king is in check
-    if rules.isKingInCheck(board, color) then
-        return true
+    -- Determine the squares to check based on the side
+    local squaresToCheck = {}
+    if side == "kingside" then
+        table.insert(squaresToCheck, {x = kingX, y = kingY})
+        table.insert(squaresToCheck, {x = kingX + 1, y = kingY})
+        table.insert(squaresToCheck, {x = kingX + 2, y = kingY})
+    else
+        table.insert(squaresToCheck, {x = kingX, y = kingY})
+        table.insert(squaresToCheck, {x = kingX - 1, y = kingY})
+        table.insert(squaresToCheck, {x = kingX - 2, y = kingY})
     end
     
-    -- Check if the king passes through check
-    if side == "kingside" then
-        -- Check f1 and g1 for white, f8 and g8 for black
-        for x = 6, 7 do
-            -- Make a temporary move
-            local tempPiece = board[kingY][x]
-            board[kingY][x] = board[kingY][kingX]
-            board[kingY][kingX] = nil
-            
-            -- Check if the king is in check
-            local inCheck = rules.isKingInCheck(board, color)
-            
-            -- Undo the temporary move
-            board[kingY][kingX] = board[kingY][x]
-            board[kingY][x] = tempPiece
-            
-            if inCheck then
-                return true
-            end
-        end
-    else
-        -- Check b1, c1, d1 for white, b8, c8, d8 for black
-        for x = 4, 2, -1 do
-            -- Make a temporary move
-            local tempPiece = board[kingY][x]
-            board[kingY][x] = board[kingY][kingX]
-            board[kingY][kingX] = nil
-            
-            -- Check if the king is in check
-            local inCheck = rules.isKingInCheck(board, color)
-            
-            -- Undo the temporary move
-            board[kingY][kingX] = board[kingY][x]
-            board[kingY][x] = tempPiece
-            
-            if inCheck then
-                return true
+    -- Check if any opponent's piece can attack any of these squares
+    local opponentColor = color == "white" and "black" or "white"
+    for _, square in ipairs(squaresToCheck) do
+        for y = 1, 8 do
+            for x = 1, 8 do
+                local piece = board[y][x]
+                if piece and piece.color == opponentColor then
+                    -- Make a temporary move to check if it would capture the king
+                    local tempPiece = board[square.y][square.x]
+                    board[square.y][square.x] = nil
+                    
+                    -- Check if the move is valid (ignoring the check for putting own king in check)
+                    local valid = false
+                    if piece.type == "pawn" then
+                        valid = rules.isValidPawnMove(board, x, y, square.x, square.y, opponentColor, nil)
+                    elseif piece.type == "rook" then
+                        valid = rules.isValidRookMove(board, x, y, square.x, square.y)
+                    elseif piece.type == "knight" then
+                        valid = rules.isValidKnightMove(x, y, square.x, square.y)
+                    elseif piece.type == "bishop" then
+                        valid = rules.isValidBishopMove(board, x, y, square.x, square.y)
+                    elseif piece.type == "queen" then
+                        valid = rules.isValidQueenMove(board, x, y, square.x, square.y)
+                    elseif piece.type == "king" then
+                        valid = rules.isValidKingMove(x, y, square.x, square.y)
+                    end
+                    
+                    -- Restore the square
+                    board[square.y][square.x] = tempPiece
+                    
+                    if valid then
+                        return true
+                    end
+                end
             end
         end
     end
@@ -212,6 +216,48 @@ end
 -- Check if a player is in checkmate
 function pieces.isCheckmate(board, color)
     return rules.isCheckmate(board, color)
+end
+
+-- Check if a player is in stalemate
+function pieces.isStalemate(board, color)
+    -- First, check if the king is in check (if it is, it's not stalemate)
+    if rules.isKingInCheck(board, color) then
+        return false
+    end
+    
+    -- Check if any legal move can be made
+    for fromY = 1, 8 do
+        for fromX = 1, 8 do
+            local piece = board[fromY][fromX]
+            if piece and piece.color == color then
+                for toY = 1, 8 do
+                    for toX = 1, 8 do
+                        if rules.isValidMove(board, fromX, fromY, toX, toY, color) then
+                            -- Make a temporary move
+                            local tempPiece = board[toY][toX]
+                            board[toY][toX] = piece
+                            board[fromY][fromX] = nil
+                            
+                            -- Check if the king is in check after the move
+                            local inCheck = rules.isKingInCheck(board, color)
+                            
+                            -- Undo the temporary move
+                            board[fromY][fromX] = piece
+                            board[toY][toX] = tempPiece
+                            
+                            -- If we found a move that doesn't put the king in check, it's not stalemate
+                            if not inCheck then
+                                return false
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    
+    -- If we couldn't find any legal move, it's stalemate
+    return true
 end
 
 -- Reset moved pieces tracking
